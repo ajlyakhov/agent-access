@@ -180,6 +180,8 @@ If **multiple** `release:*` labels are present, the **strongest** wins: `major` 
 3. Merge to **`main`**. [.github/scripts/release_bump_from_merged_pr.py](.github/scripts/release_bump_from_merged_pr.py) may commit **`chore(release): …`** and push; then **Tag on version bump** pushes **`v{x.y.z}`**.
 4. Create a **GitHub Release** from that tag to run the PyPI workflow below.
 
+_To try the pipeline: merge a PR labeled **`release:patch`** without changing `version` / `__version__` in that PR; Actions should commit a patch semver bump, then push the matching **`v…`** tag._
+
 ### Version tag (automated)
 
 Pushes to **`main`** that touch **`pyproject.toml`** or **`agent_access/__init__.py`** run [.github/workflows/tag-on-version-bump.yml](.github/workflows/tag-on-version-bump.yml), which executes [.github/scripts/tag_if_version_bumped.py](.github/scripts/tag_if_version_bumped.py):
