@@ -159,55 +159,6 @@ pip install -e ".[dev]"
 pytest
 ```
 
-## Build & publish (maintainers)
-
-### Release train (PR labels)
-
-Create the **`release:patch`**, **`release:minor`**, and **`release:major`** labels under **Settings → Labels** if needed.
-
-Agent-friendly flow: a PR carries the **bump type** as a label; after you **merge** to **`main`**, CI applies the semver bump and tags.
-
-| Label | Bump (`X.Y.Z`) |
-|-------|----------------|
-| `release:patch` | `Z+1` |
-| `release:minor` | `Y+1`, `Z=0` |
-| `release:major` | `X+1`, `Y=Z=0` |
-
-If **multiple** `release:*` labels are present, the **strongest** wins: `major` → `minor` → `patch`.
-
-1. Open a PR with code/docs changes. Add **one** of the labels above (only maintainers with label permissions should add them on untrusted PRs).
-2. **Do not** change `[project].version` / `__version__` in that PR if you want the automation to bump: if the merge **already** changes the version, [.github/workflows/release-bump-from-pr.yml](.github/workflows/release-bump-from-pr.yml) **skips** (treats it as a manual release).
-3. Merge to **`main`**. [.github/scripts/release_bump_from_merged_pr.py](.github/scripts/release_bump_from_merged_pr.py) may commit **`chore(release): …`** and push; then **Tag on version bump** pushes **`v{x.y.z}`**.
-4. Create a **GitHub Release** from that tag to run the PyPI workflow below.
-
-### Version tag (automated)
-
-Pushes to **`main`** that touch **`pyproject.toml`** or **`agent_access/__init__.py`** run [.github/workflows/tag-on-version-bump.yml](.github/workflows/tag-on-version-bump.yml), which executes [.github/scripts/tag_if_version_bumped.py](.github/scripts/tag_if_version_bumped.py):
-
-- **`[project].version`** must match **`agent_access/__init__.py`** `__version__` (otherwise the job fails).
-- If that version **differs** from **`HEAD~1`**’s `pyproject.toml` and **`v{version}`** is not already on **`origin`**, the workflow creates an **annotated tag** and **`git push`**es it.
-
-This covers **manual** version bumps on `main` as well as the extra commit produced by **Release bump from PR labels**.
-
-### PyPI upload (automated)
-
-On **published GitHub Releases**, [.github/workflows/publish-pypi.yml](.github/workflows/publish-pypi.yml) builds with `python -m build` and uploads to PyPI via **trusted publishing (OIDC)** — no long-lived `PYPI_API_TOKEN` in repo secrets.
-
-1. In [PyPI → your project → Settings → Publishing](https://docs.pypi.org/trusted-publishers/), add a pending **GitHub** publisher: owner **`ajlyakhov`**, repository **`agent-access`**, workflow **`publish-pypi.yml`** (environment name empty unless you add a GitHub Environment and match it on PyPI).
-2. Either use the **PR label** flow above (merge → bump commit → tag → release) or bump **`version`** in **both** files on **`main`** directly and let **Tag on version bump** run.
-3. In GitHub **Releases**, create a **release** from the new **`v{x.y.z}`** tag and publish it to run this workflow.
-
-Details: [PyPI trusted publishers](https://docs.pypi.org/trusted-publishers/), [pypa/gh-action-pypi-publish](https://github.com/pypa/gh-action-pypi-publish).
-
-### Manual PyPI
-
-```bash
-pip install build twine
-python -m build
-twine check dist/*
-twine upload dist/*
-```
-
 ## License
 
 MIT — see [LICENSE](LICENSE).
