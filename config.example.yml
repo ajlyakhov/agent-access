@@ -3,7 +3,7 @@
 # Legacy: servers/github entries may be plain strings (ssh or owner/repo); name/description default.
 myproject:
   access:
-    master_key_path: ~/.ssh/id_master_safelagoon
+    master_key_path: ~/.ssh/id_master_myproject
     agent_pubkey_path: ~/.ssh/agent_project.pub
     agent_github_name: agent_gh_name
     # optional: pull | push | maintain | admin (default: push)
