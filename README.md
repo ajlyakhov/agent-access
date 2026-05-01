@@ -161,17 +161,24 @@ pytest
 
 ## Build & publish (maintainers)
 
-### Automated (GitHub Actions)
+### Version tag (automated)
+
+Pushes to **`main`** that touch **`pyproject.toml`** or **`agent_access/__init__.py`** run [.github/workflows/tag-on-version-bump.yml](.github/workflows/tag-on-version-bump.yml), which executes [.github/scripts/tag_if_version_bumped.py](.github/scripts/tag_if_version_bumped.py):
+
+- **`[project].version`** must match **`agent_access/__init__.py`** `__version__` (otherwise the job fails).
+- If that version **differs** from **`HEAD~1`**’s `pyproject.toml` and **`v{version}`** is not already on **`origin`**, the workflow creates an **annotated tag** and **`git push`**es it.
+
+### PyPI upload (automated)
 
 On **published GitHub Releases**, [.github/workflows/publish-pypi.yml](.github/workflows/publish-pypi.yml) builds with `python -m build` and uploads to PyPI via **trusted publishing (OIDC)** — no long-lived `PYPI_API_TOKEN` in repo secrets.
 
 1. In [PyPI → your project → Settings → Publishing](https://docs.pypi.org/trusted-publishers/), add a pending **GitHub** publisher: owner **`ajlyakhov`**, repository **`agent-access`**, workflow **`publish-pypi.yml`** (environment name empty unless you add a GitHub Environment and match it on PyPI).
-2. Bump **`version`** in `pyproject.toml` (and `agent_access/__init__.py` if you keep them in sync).
-3. Commit, push, then create a **GitHub Release** from a tag (e.g. `v0.1.0`) and publish it; the workflow runs on release publish.
+2. Bump **`version`** in **both** `pyproject.toml` and `agent_access/__init__.py` (`__version__`) in one commit, push to **`main`** — wait for the **Tag on version bump** workflow to push **`v{x.y.z}`** (or create the tag manually if it already exists).
+3. In GitHub **Releases**, create a **release** from that tag and publish it to run the PyPI workflow.
 
 Details: [PyPI trusted publishers](https://docs.pypi.org/trusted-publishers/), [pypa/gh-action-pypi-publish](https://github.com/pypa/gh-action-pypi-publish).
 
-### Manual
+### Manual PyPI
 
 ```bash
 pip install build twine
