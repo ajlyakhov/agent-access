@@ -161,14 +161,24 @@ pytest
 
 ## Build & publish (maintainers)
 
+### Automated (GitHub Actions)
+
+On **published GitHub Releases**, [.github/workflows/publish-pypi.yml](.github/workflows/publish-pypi.yml) builds with `python -m build` and uploads to PyPI via **trusted publishing (OIDC)** — no long-lived `PYPI_API_TOKEN` in repo secrets.
+
+1. In [PyPI → your project → Settings → Publishing](https://docs.pypi.org/trusted-publishers/), add a pending **GitHub** publisher: owner **`ajlyakhov`**, repository **`agent-access`**, workflow **`publish-pypi.yml`** (environment name empty unless you add a GitHub Environment and match it on PyPI).
+2. Bump **`version`** in `pyproject.toml` (and `agent_access/__init__.py` if you keep them in sync).
+3. Commit, push, then create a **GitHub Release** from a tag (e.g. `v0.1.0`) and publish it; the workflow runs on release publish.
+
+Details: [PyPI trusted publishers](https://docs.pypi.org/trusted-publishers/), [pypa/gh-action-pypi-publish](https://github.com/pypa/gh-action-pypi-publish).
+
+### Manual
+
 ```bash
 pip install build twine
 python -m build
 twine check dist/*
 twine upload dist/*
 ```
-
-Ensure `README.md` renders on PyPI and version in `pyproject.toml` / `agent_access/__init__.py` is bumped before release.
 
 ## License
 
