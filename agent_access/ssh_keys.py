@@ -10,16 +10,16 @@ from paramiko import ECDSAKey, Ed25519Key, RSAKey
 from agent_access.config import _parse_user_host
 
 
-def _load_private_key(master_key_path: Path) -> paramiko.PKey:
+def _load_private_key(private_key_path: Path) -> paramiko.PKey:
     last_err: Exception | None = None
     for cls in (Ed25519Key, ECDSAKey, RSAKey):
         try:
-            return cls.from_private_key_file(str(master_key_path))
+            return cls.from_private_key_file(str(private_key_path))
         except (paramiko.SSHException, OSError) as e:
             last_err = e
             continue
     raise paramiko.SSHException(
-        f"Could not load private key {master_key_path}: {last_err}"
+        f"Could not load private key {private_key_path}: {last_err}"
     ) from last_err
 
 
@@ -52,14 +52,14 @@ def _connect(
     user: str,
     host: str,
     port: int,
-    master_key_path: Path,
+    private_key_path: Path,
 ) -> paramiko.SSHClient:
-    if not master_key_path.is_file():
-        raise FileNotFoundError(f"Master SSH private key not found: {master_key_path}")
+    if not private_key_path.is_file():
+        raise FileNotFoundError(f"Master SSH private key not found: {private_key_path}")
 
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    key = _load_private_key(master_key_path)
+    key = _load_private_key(private_key_path)
     client.connect(
         hostname=host,
         port=port,
@@ -74,11 +74,11 @@ def _connect(
 
 def ensure_authorized_keys(
     server: str,
-    master_key_path: Path,
+    private_key_path: Path,
     pubkey_lines: tuple[str, ...],
 ) -> None:
     user, host, port = _parse_user_host(server)
-    client = _connect(user, host, port, master_key_path)
+    client = _connect(user, host, port, private_key_path)
     try:
         sftp = client.open_sftp()
         try:
@@ -113,12 +113,12 @@ def ensure_authorized_keys(
 
 def pubkey_presence_on_server(
     server: str,
-    master_key_path: Path,
+    private_key_path: Path,
     pubkey_lines: tuple[str, ...],
 ) -> tuple[bool, ...]:
     """Return whether each configured public key line is present on the remote authorized_keys."""
     user, host, port = _parse_user_host(server)
-    client = _connect(user, host, port, master_key_path)
+    client = _connect(user, host, port, private_key_path)
     try:
         sftp = client.open_sftp()
         try:
@@ -141,11 +141,11 @@ def pubkey_presence_on_server(
 
 def remove_pubkeys_from_authorized_keys(
     server: str,
-    master_key_path: Path,
+    private_key_path: Path,
     pubkey_lines: tuple[str, ...],
 ) -> None:
     user, host, port = _parse_user_host(server)
-    client = _connect(user, host, port, master_key_path)
+    client = _connect(user, host, port, private_key_path)
     try:
         sftp = client.open_sftp()
         try:

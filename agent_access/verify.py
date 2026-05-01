@@ -8,10 +8,19 @@ from typing import Any
 import paramiko
 from paramiko import ECDSAKey, Ed25519Key, RSAKey
 
-from agent_access.config import ProjectConfig, _parse_user_host, read_agent_pubkeys, resolve_github_token
+from agent_access.config import (
+    ProjectConfig,
+    _parse_user_host,
+    read_agent_pubkeys,
+    resolve_agent_github_token,
+    resolve_master_github_token,
+)
 from agent_access.github_collab import (
+    fetch_authenticated_user_login,
     fetch_repo_for_token,
     github_user_exists,
+    is_repository_collaborator,
+    pending_repository_invitation_for_user,
     split_owner_repo,
 )
 from agent_access.ssh_keys import _connect
@@ -40,10 +49,10 @@ def _try_load_master_key(path: Path) -> tuple[bool, str, str]:
     return False, "", last_err or "unrecognized private key format"
 
 
-def _verify_ssh_server(server_ssh: str, master_key_path: Path) -> None:
+def _verify_ssh_server(server_ssh: str, private_key_path: Path) -> None:
     """Connect with master key and confirm SFTP home and ~/.ssh behave as enable expects."""
     user, host, port = _parse_user_host(server_ssh)
-    client = _connect(user, host, port, master_key_path)
+    client = _connect(user, host, port, private_key_path)
     try:
         sftp = client.open_sftp()
         try:
@@ -71,7 +80,7 @@ def run_verification(cfg: ProjectConfig) -> tuple[list[VerifyCheck], tuple[str, 
     """
     checks: list[VerifyCheck] = []
     pubkeys: tuple[str, ...] | None = None
-    mk = cfg.access.master_key_path
+    mk = cfg.access.master.private_key_path
 
     master_ok, ktype, err = _try_load_master_key(mk)
     checks.append(
@@ -83,12 +92,12 @@ def run_verification(cfg: ProjectConfig) -> tuple[list[VerifyCheck], tuple[str, 
     )
 
     try:
-        pubkeys = read_agent_pubkeys(cfg.access.agent_pubkey_path)
+        pubkeys = read_agent_pubkeys(cfg.access.agent.pubkey_path)
         checks.append(
             VerifyCheck(
                 label="Agent public key file",
                 ok=True,
-                detail=f"{len(pubkeys)} key line(s) from {cfg.access.agent_pubkey_path}",
+                detail=f"{len(pubkeys)} key line(s) from {cfg.access.agent.pubkey_path}",
             ),
         )
     except (FileNotFoundError, ValueError, OSError) as e:
@@ -138,7 +147,7 @@ def run_verification(cfg: ProjectConfig) -> tuple[list[VerifyCheck], tuple[str, 
                     ),
                 )
 
-    token = resolve_github_token(cfg.access)
+    token = resolve_master_github_token(cfg.access)
     env_token_set = bool(os.environ.get("GITHUB_TOKEN", "").strip())
     if cfg.github_repos:
         if not token:
@@ -146,7 +155,10 @@ def run_verification(cfg: ProjectConfig) -> tuple[list[VerifyCheck], tuple[str, 
                 VerifyCheck(
                     label="GitHub token",
                     ok=False,
-                    detail="set GITHUB_TOKEN or access.github_token (required for configured GitHub repos)",
+                    detail=(
+                        "set GITHUB_TOKEN or access.master.github_token "
+                        "(required for configured GitHub repos)"
+                    ),
                 ),
             )
             for gr in cfg.github_repos:
@@ -158,7 +170,7 @@ def run_verification(cfg: ProjectConfig) -> tuple[list[VerifyCheck], tuple[str, 
                     ),
                 )
         else:
-            src = "environment" if env_token_set else "access.github_token in config"
+            src = "environment" if env_token_set else "access.master.github_token in config"
             checks.append(
                 VerifyCheck(
                     label="GitHub token",
@@ -166,7 +178,35 @@ def run_verification(cfg: ProjectConfig) -> tuple[list[VerifyCheck], tuple[str, 
                     detail=f"set ({src}; value not shown)",
                 ),
             )
-            agent_login = cfg.access.agent_github_name
+            agent_login = cfg.access.agent.github_name
+            agent_pat = resolve_agent_github_token(cfg.access)
+            if agent_pat:
+                try:
+                    invitee_login = fetch_authenticated_user_login(agent_pat)
+                    pat_ok = invitee_login.lower() == agent_login.lower()
+                    checks.append(
+                        VerifyCheck(
+                            label="Agent GitHub token (invitee PAT)",
+                            ok=pat_ok,
+                            detail=(
+                                f"GET /user login={invitee_login!r} matches "
+                                f"access.agent.github_name"
+                                if pat_ok
+                                else (
+                                    f"GET /user login={invitee_login!r} does not match "
+                                    f"access.agent.github_name={agent_login!r}"
+                                )
+                            ),
+                        ),
+                    )
+                except Exception as e:
+                    checks.append(
+                        VerifyCheck(
+                            label="Agent GitHub token (invitee PAT)",
+                            ok=False,
+                            detail=str(e),
+                        ),
+                    )
             try:
                 u_ok = github_user_exists(agent_login, access=cfg.access)
                 checks.append(
@@ -204,11 +244,41 @@ def run_verification(cfg: ProjectConfig) -> tuple[list[VerifyCheck], tuple[str, 
                     is_admin = bool(perms.get("admin"))
                     role = data.get("role_name") or ""
                     if is_admin:
+                        collab = is_repository_collaborator(
+                            owner,
+                            repo,
+                            agent_login,
+                            access=cfg.access,
+                        )
+                        invited = pending_repository_invitation_for_user(
+                            owner,
+                            repo,
+                            agent_login,
+                            access=cfg.access,
+                        )
+                        if collab:
+                            tail = (
+                                f"; {agent_login} is an active collaborator on this repo"
+                            )
+                        elif invited:
+                            tail = (
+                                f"; pending invitation for {agent_login} — they must "
+                                "accept (https://github.com/notifications) before git works"
+                            )
+                        else:
+                            tail = (
+                                f"; {agent_login} is not a collaborator and has no "
+                                "pending invite (run enable to add)"
+                            )
                         checks.append(
                             VerifyCheck(
                                 label=f"GitHub repo {gl}",
                                 ok=True,
-                                detail="token has admin on repo (can manage collaborators)",
+                                detail=(
+                                    "token has admin on repo (can manage collaborators)"
+                                    + tail
+                                    + (f"; role={role!r}" if role else "")
+                                ),
                             ),
                         )
                     else:

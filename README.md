@@ -9,7 +9,7 @@ CLI to **grant or revoke** agent access to servers (via `authorized_keys`) and G
 - Python **3.10+**
 - A **master** SSH private key that can sign in as each configured Linux user and manage `~/.ssh/authorized_keys`
 - A **public** key file for the agent (one or more lines) to install on servers
-- A **GitHub token** when `resources.github` is non-empty: set **`GITHUB_TOKEN`** or **`access.github_token`** in config (non-empty env wins). Token needs **admin** on those repos to add/remove collaborators.
+- A **master** GitHub PAT when `resources.github` is non-empty: set **`GITHUB_TOKEN`** or **`access.master.github_token`** (non-empty env wins). Token needs **admin** on those repos to add/remove collaborators.
 
 Host key policy uses Paramiko’s `AutoAddPolicy` (equivalent to blindly accepting new hosts). For production use, prime `known_hosts` or adjust the code if you need stricter SSH host verification.
 
@@ -75,7 +75,12 @@ Copy [`config.example.yml`](config.example.yml) into **`~/.agent-access/config.y
 
 Each **server** has `name`, `description`, and `ssh` (`user@host` or `user@host:port`). Each **GitHub** entry has `name`, `description`, and `repo` (`owner/name`). You can still use legacy plain strings for servers (SSH target only) and repos (`owner/repo`).
 
-Paths under `access` support `~`. Optional **`access.github_token`** supplies the PAT when `GITHUB_TOKEN` is unset (if both are set, **the environment variable wins**).
+Paths under `access` support `~`.
+
+**`access`** splits **who owns resources** vs **who receives access**:
+
+- **`access.master`**: **`private_key_path`** (SSH private key used to manage servers’ `authorized_keys`); optional **`github_token`** (PAT for collaborator API when `GITHUB_TOKEN` is unset — env wins).
+- **`access.agent`**: **`github_name`**, **`pubkey_path`**, optional **`github_permission`** (`pull` | `push` | `maintain` | `admin`, default `push`); optional **`github_token`** (invitee PAT for auto-accepting repo invitations when `AGENT_GITHUB_TOKEN` is unset — env wins).
 
 Global CLI option **`--config PATH`** defaults to **`~/.agent-access/config.yml`**. It must appear **before** the subcommand:
 
@@ -87,9 +92,16 @@ agent-access --config /path/to/config.yml verify myproject
 
 | Variable | Purpose |
 |----------|---------|
-| `GITHUB_TOKEN` | Optional if `access.github_token` is set. When set and non-empty, used instead of the config field. Required (via **either** mechanism) for `enable` / `disable` / `verify` / `status` when GitHub repos are configured. |
+| `GITHUB_TOKEN` | Optional if `access.master.github_token` is set. When set and non-empty, wins over config. Required (via **either** mechanism) for `enable` / `disable` / `verify` / `status` when GitHub repos are configured. |
+| `AGENT_GITHUB_TOKEN` | Optional. When set, overrides `access.agent.github_token`. Must belong to **`access.agent.github_name`** — used to **accept repository invitations** automatically after `enable` (org outside-collaborator flow). |
 
 Use a classic PAT with `repo` scope (or another token that yields **`permissions.admin: true`** on `GET /repos/{owner}/{repo}` for those repositories).
+
+The **invitee** PAT needs permission to use **`GET /user`** and **`GET/PATCH /user/repository_invitations`** (classic `repo` scope is typical).
+
+### Organization repos and invitations
+
+For **organization-owned** repositories, GitHub usually sends a **collaborator invitation** to **`access.agent.github_name`**; they must **accept** it before git access works — unless you set **`access.agent.github_token`** (or **`AGENT_GITHUB_TOKEN`**), in which case `enable` tries to **accept pending invites** for the configured repos via the GitHub API. **`verify`** checks that the invitee token’s `GET /user` login matches **`access.agent.github_name`**. Until accepted, `status` reports **invitation pending**. **`disable`** revokes active collaborators and **cancels pending invitations** for that login.
 
 ## Commands
 
@@ -118,7 +130,7 @@ Runs the same checks as `verify` (report on **stderr**), then prompts:
 
 `Proceed with enable for project '…'? [y/N]:`
 
-Use **`-y` / `--yes`** on the **`enable`** or **`disable`** subcommand (after the verb) to skip the confirmation prompt (required in non-interactive environments). Then installs agent public keys and adds the GitHub user as a collaborator. On full success, prints the **`AGENT_ACCESS_CONTEXT`** block on **stdout** for pasting into the agent.
+Use **`-y` / `--yes`** on the **`enable`** or **`disable`** subcommand (after the verb) to skip the confirmation prompt (required in non-interactive environments). Then installs agent public keys and adds the GitHub user as a collaborator (and **auto-accepts** pending repo invitations when **`access.agent.github_token`** / **`AGENT_GITHUB_TOKEN`** is set). On full success, prints the **`AGENT_ACCESS_CONTEXT`** block on **stdout** for pasting into the agent.
 
 ```bash
 agent-access enable myproject
@@ -135,7 +147,7 @@ agent-access disable myproject -y
 
 ### `status`
 
-Shows whether agent keys appear in each host’s `authorized_keys` and collaborator permission on each repo (GitHub skipped if neither `GITHUB_TOKEN` nor `access.github_token` is set).
+Shows whether agent keys appear in each host’s `authorized_keys` and collaborator permission on each repo (GitHub skipped if neither `GITHUB_TOKEN` nor **`access.master.github_token`** is set).
 
 ```bash
 agent-access status myproject

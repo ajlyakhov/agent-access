@@ -27,9 +27,11 @@ def test_cli_verify_fails_missing_keys(tmp_path: Path, monkeypatch: pytest.Monke
         """
 only:
   access:
-    master_key_path: /nonexistent/master
-    agent_pubkey_path: /nonexistent/pub
-    agent_github_name: u
+    master:
+      private_key_path: /nonexistent/master
+    agent:
+      github_name: u
+      pubkey_path: /nonexistent/pub
   resources:
     servers: []
     github: []

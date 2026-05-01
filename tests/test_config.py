@@ -5,7 +5,22 @@ from pathlib import Path
 import pytest
 import yaml
 
-from agent_access.config import AccessConfig, load_project_config, read_agent_pubkeys, resolve_github_token
+from agent_access.config import (
+    AccessConfig,
+    AgentAccessConfig,
+    MasterAccessConfig,
+    load_project_config,
+    read_agent_pubkeys,
+    resolve_agent_github_token,
+    resolve_master_github_token,
+)
+
+
+def _nested_access(master: Path, pub: Path) -> dict[str, object]:
+    return {
+        "master": {"private_key_path": str(master)},
+        "agent": {"github_name": "u", "pubkey_path": str(pub)},
+    }
 
 
 def test_load_structured_resources(keypair: tuple[Path, Path], tmp_path: Path) -> None:
@@ -16,9 +31,13 @@ def test_load_structured_resources(keypair: tuple[Path, Path], tmp_path: Path) -
             {
                 "proj": {
                     "access": {
-                        "master_key_path": str(master),
-                        "agent_pubkey_path": str(pub),
-                        "agent_github_name": "bot",
+                        "master": {
+                            "private_key_path": str(master),
+                        },
+                        "agent": {
+                            "github_name": "bot",
+                            "pubkey_path": str(pub),
+                        },
                     },
                     "resources": {
                         "servers": [
@@ -48,7 +67,63 @@ def test_load_structured_resources(keypair: tuple[Path, Path], tmp_path: Path) -
     assert p.github_repos[0].repo == "acme/api"
 
 
-def test_access_github_token(keypair: tuple[Path, Path], tmp_path: Path) -> None:
+def test_access_master_github_token(keypair: tuple[Path, Path], tmp_path: Path) -> None:
+    master, pub = keypair
+    cfg = tmp_path / "c.yml"
+    cfg.write_text(
+        yaml.safe_dump(
+            {
+                "proj": {
+                    "access": {
+                        "master": {
+                            "private_key_path": str(master),
+                            "github_token": " ghp_from_yaml ",
+                        },
+                        "agent": {
+                            "github_name": "bot",
+                            "pubkey_path": str(pub),
+                        },
+                    },
+                    "resources": {"servers": [], "github": []},
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    p = load_project_config(cfg, "proj")
+    assert p.access.master.github_token == "ghp_from_yaml"
+
+
+def test_access_agent_github_token_nested(
+    keypair: tuple[Path, Path], tmp_path: Path
+) -> None:
+    master, pub = keypair
+    cfg = tmp_path / "c.yml"
+    cfg.write_text(
+        yaml.safe_dump(
+            {
+                "proj": {
+                    "access": {
+                        "master": {"private_key_path": str(master)},
+                        "agent": {
+                            "github_name": "bot",
+                            "pubkey_path": str(pub),
+                            "github_token": " ghp_agent_pat ",
+                        },
+                    },
+                    "resources": {"servers": [], "github": []},
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    p = load_project_config(cfg, "proj")
+    assert p.access.agent.github_token == "ghp_agent_pat"
+
+
+def test_flat_access_rejected(keypair: tuple[Path, Path], tmp_path: Path) -> None:
     master, pub = keypair
     cfg = tmp_path / "c.yml"
     cfg.write_text(
@@ -59,7 +134,6 @@ def test_access_github_token(keypair: tuple[Path, Path], tmp_path: Path) -> None
                         "master_key_path": str(master),
                         "agent_pubkey_path": str(pub),
                         "agent_github_name": "bot",
-                        "github_token": " ghp_from_yaml ",
                     },
                     "resources": {"servers": [], "github": []},
                 },
@@ -68,38 +142,59 @@ def test_access_github_token(keypair: tuple[Path, Path], tmp_path: Path) -> None
         ),
         encoding="utf-8",
     )
-    p = load_project_config(cfg, "proj")
-    assert p.access.github_token == "ghp_from_yaml"
+    with pytest.raises(ValueError, match="access.master must be a mapping"):
+        load_project_config(cfg, "proj")
 
 
-def test_resolve_github_token_env_over_config(
+def test_resolve_agent_github_token_env_over_config(
     keypair: tuple[Path, Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     master, pub = keypair
+    monkeypatch.setenv("AGENT_GITHUB_TOKEN", "pat_env")
+    acc = AccessConfig(
+        master=MasterAccessConfig(private_key_path=master, github_token=None),
+        agent=AgentAccessConfig(
+            github_name="u",
+            pubkey_path=pub,
+            github_token="pat_yaml",
+        ),
+    )
+    assert resolve_agent_github_token(acc) == "pat_env"
+
+
+def test_resolve_master_github_token_env_over_config(
+    keypair: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    master, pub = keypair
+    monkeypatch.delenv("AGENT_GITHUB_TOKEN", raising=False)
     monkeypatch.setenv("GITHUB_TOKEN", "from_env")
     acc = AccessConfig(
-        master_key_path=master,
-        agent_pubkey_path=pub,
-        agent_github_name="u",
-        github_token="from_yaml",
+        master=MasterAccessConfig(
+            private_key_path=master,
+            github_token="from_yaml",
+        ),
+        agent=AgentAccessConfig(github_name="u", pubkey_path=pub),
     )
-    assert resolve_github_token(acc) == "from_env"
+    assert resolve_master_github_token(acc) == "from_env"
 
 
-def test_resolve_github_token_config_when_env_empty(
+def test_resolve_master_github_token_config_when_env_empty(
     keypair: tuple[Path, Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     master, pub = keypair
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("AGENT_GITHUB_TOKEN", raising=False)
     acc = AccessConfig(
-        master_key_path=master,
-        agent_pubkey_path=pub,
-        agent_github_name="u",
-        github_token="from_yaml",
+        master=MasterAccessConfig(
+            private_key_path=master,
+            github_token="from_yaml",
+        ),
+        agent=AgentAccessConfig(github_name="u", pubkey_path=pub),
     )
-    assert resolve_github_token(acc) == "from_yaml"
+    assert resolve_master_github_token(acc) == "from_yaml"
 
 
 def test_load_legacy_string_entries(keypair: tuple[Path, Path], tmp_path: Path) -> None:
@@ -109,11 +204,7 @@ def test_load_legacy_string_entries(keypair: tuple[Path, Path], tmp_path: Path) 
         yaml.safe_dump(
             {
                 "p": {
-                    "access": {
-                        "master_key_path": str(master),
-                        "agent_pubkey_path": str(pub),
-                        "agent_github_name": "u",
-                    },
+                    "access": _nested_access(master, pub),
                     "resources": {
                         "servers": ["ec2-user@192.168.1.1:2222"],
                         "github": ["org/repo-one"],
@@ -137,11 +228,7 @@ def test_unknown_project(keypair: tuple[Path, Path], tmp_path: Path) -> None:
         yaml.safe_dump(
             {
                 "only": {
-                    "access": {
-                        "master_key_path": str(master),
-                        "agent_pubkey_path": str(pub),
-                        "agent_github_name": "u",
-                    },
+                    "access": _nested_access(master, pub),
                     "resources": {"servers": [], "github": []},
                 },
             },
@@ -160,11 +247,7 @@ def test_invalid_github_repo_slug(keypair: tuple[Path, Path], tmp_path: Path) ->
         yaml.safe_dump(
             {
                 "p": {
-                    "access": {
-                        "master_key_path": str(master),
-                        "agent_pubkey_path": str(pub),
-                        "agent_github_name": "u",
-                    },
+                    "access": _nested_access(master, pub),
                     "resources": {"servers": [], "github": ["not-a-slash"]},
                 },
             },

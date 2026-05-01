@@ -12,11 +12,14 @@ from agent_access.config import (
     ServerResource,
     load_project_config,
     read_agent_pubkeys,
-    resolve_github_token,
+    resolve_agent_github_token,
+    resolve_master_github_token,
 )
 from agent_access.github_collab import (
+    accept_repository_invitations_for_repositories,
     add_collaborator,
     get_collaborator_permission,
+    pending_repository_invitation_for_user,
     remove_collaborator,
     split_owner_repo,
 )
@@ -58,8 +61,8 @@ def _print_agent_context(
     servers: tuple[ServerResource, ...],
     github_repos: tuple[GithubResource, ...],
     agent_github_name: str,
-    master_key_path: Path,
-    agent_pubkey_path: Path,
+    private_key_path: Path,
+    pubkey_path: Path,
     github_permission: str,
 ) -> None:
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -71,7 +74,7 @@ def _print_agent_context(
         f"github_collaborator_permission: {github_permission}",
         "",
         "ssh:",
-        "  Use the agent private key that matches agent_pubkey_path below; paths only, no key material.",
+        "  Use the agent private key that matches access.agent.pubkey_path below; paths only, no key material.",
     ]
     for srv in servers:
         lines.append(f"  - name: {srv.name}")
@@ -91,8 +94,8 @@ def _print_agent_context(
         [
             "",
             "local_paths_operator_machine_only:",
-            f"  master_key_path: {master_key_path}",
-            f"  agent_pubkey_path: {agent_pubkey_path}",
+            f"  private_key_path: {private_key_path}",
+            f"  pubkey_path: {pubkey_path}",
             "",
             "Save this block in the agent context window so the agent knows scope of access.",
             "--- AGENT_ACCESS_CONTEXT_END",
@@ -143,7 +146,7 @@ def cmd_enable(
     for srv in cfg.servers:
         label = _server_log_label(srv)
         try:
-            ensure_authorized_keys(srv.ssh, cfg.access.master_key_path, pubkeys)
+            ensure_authorized_keys(srv.ssh, cfg.access.master.private_key_path, pubkeys)
             print(f"SSH OK: {label}", file=sys.stderr)
         except Exception as e:
             errors.append(f"SSH {label}: {e}")
@@ -153,14 +156,41 @@ def cmd_enable(
         owner, name = split_owner_repo(gr.repo)
         label = _github_log_label(gr)
         try:
-            add_collaborator(
+            outcome = add_collaborator(
                 owner,
                 name,
-                cfg.access.agent_github_name,
-                cfg.access.github_permission,
+                cfg.access.agent.github_name,
+                cfg.access.agent.github_permission,
                 access=cfg.access,
             )
-            print(f"GitHub OK: {label}", file=sys.stderr)
+            agent_pat = resolve_agent_github_token(cfg.access)
+            if outcome == "invited" and agent_pat:
+                accepted = accept_repository_invitations_for_repositories(
+                    {gr.repo},
+                    bearer=agent_pat,
+                )
+                if accepted:
+                    print(
+                        f"GitHub OK: {label} (invitation auto-accepted)",
+                        file=sys.stderr,
+                    )
+                else:
+                    print(
+                        f"GitHub INVITE: {label} — invitation not found yet for "
+                        f"{cfg.access.agent.github_name}; accept at "
+                        "https://github.com/notifications or retry enable",
+                        file=sys.stderr,
+                    )
+            elif outcome == "invited":
+                print(
+                    f"GitHub INVITE: {label} — {cfg.access.agent.github_name} must "
+                    "accept the repository invitation (https://github.com/notifications "
+                    "or email) before git/push access works; or set "
+                    "AGENT_GITHUB_TOKEN / access.agent.github_token",
+                    file=sys.stderr,
+                )
+            else:
+                print(f"GitHub OK: {label}", file=sys.stderr)
         except Exception as e:
             errors.append(f"GitHub {label}: {e}")
             print(f"GitHub FAIL: {label}: {e}", file=sys.stderr)
@@ -175,10 +205,10 @@ def cmd_enable(
         project=cfg.name,
         servers=cfg.servers,
         github_repos=cfg.github_repos,
-        agent_github_name=cfg.access.agent_github_name,
-        master_key_path=cfg.access.master_key_path,
-        agent_pubkey_path=cfg.access.agent_pubkey_path,
-        github_permission=cfg.access.github_permission,
+        agent_github_name=cfg.access.agent.github_name,
+        private_key_path=cfg.access.master.private_key_path,
+        pubkey_path=cfg.access.agent.pubkey_path,
+        github_permission=cfg.access.agent.github_permission,
     )
     return 0
 
@@ -208,7 +238,7 @@ def cmd_disable(
         label = _server_log_label(srv)
         try:
             remove_pubkeys_from_authorized_keys(
-                srv.ssh, cfg.access.master_key_path, pubkeys
+                srv.ssh, cfg.access.master.private_key_path, pubkeys
             )
             print(f"SSH OK: {label}", file=sys.stderr)
         except Exception as e:
@@ -219,7 +249,7 @@ def cmd_disable(
         owner, name = split_owner_repo(gr.repo)
         label = _github_log_label(gr)
         try:
-            remove_collaborator(owner, name, cfg.access.agent_github_name, access=cfg.access)
+            remove_collaborator(owner, name, cfg.access.agent.github_name, access=cfg.access)
             print(f"GitHub OK: {label}", file=sys.stderr)
         except Exception as e:
             errors.append(f"GitHub {label}: {e}")
@@ -237,14 +267,14 @@ def cmd_disable(
 
 def cmd_status(config_path: Path, project: str) -> int:
     cfg = load_project_config(config_path, project)
-    pubkeys = read_agent_pubkeys(cfg.access.agent_pubkey_path)
+    pubkeys = read_agent_pubkeys(cfg.access.agent.pubkey_path)
     errors: list[str] = []
-    github_ok = bool(resolve_github_token(cfg.access))
+    github_ok = bool(resolve_master_github_token(cfg.access))
 
     lines_out: list[str] = [
         f"project: {cfg.name}",
-        f"github_user: {cfg.access.agent_github_name}",
-        f"config_github_permission: {cfg.access.github_permission}",
+        f"github_user: {cfg.access.agent.github_name}",
+        f"config_github_permission: {cfg.access.agent.github_permission}",
         "",
         "SSH (agent public keys on remote authorized_keys):",
     ]
@@ -253,7 +283,7 @@ def cmd_status(config_path: Path, project: str) -> int:
         label = _server_log_label(srv)
         try:
             present = pubkey_presence_on_server(
-                srv.ssh, cfg.access.master_key_path, pubkeys
+                srv.ssh, cfg.access.master.private_key_path, pubkeys
             )
             n = sum(1 for p in present if p)
             total = len(present)
@@ -277,7 +307,7 @@ def cmd_status(config_path: Path, project: str) -> int:
     lines_out.append("GitHub:")
     if not github_ok:
         lines_out.append(
-            "  (skipped — set GITHUB_TOKEN or access.github_token to check collaborator permission)"
+            "  (skipped — set GITHUB_TOKEN or access.master.github_token to check collaborator permission)"
         )
     for gr in cfg.github_repos:
         label = _github_log_label(gr)
@@ -287,18 +317,30 @@ def cmd_status(config_path: Path, project: str) -> int:
         owner, name = split_owner_repo(gr.repo)
         try:
             perm = get_collaborator_permission(
-                owner, name, cfg.access.agent_github_name, access=cfg.access,
+                owner, name, cfg.access.agent.github_name, access=cfg.access,
             )
             if perm is None:
+                if pending_repository_invitation_for_user(
+                    owner,
+                    name,
+                    cfg.access.agent.github_name,
+                    access=cfg.access,
+                ):
+                    lines_out.append(
+                        f"  {label}: invitation pending (accept at "
+                        f"github.com/notifications)"
+                        + (f" — {gr.description}" if gr.description else "")
+                    )
+                    continue
                 lines_out.append(
                     f"  {label}: not a collaborator"
                     + (f" — {gr.description}" if gr.description else "")
                 )
-            else:
-                lines_out.append(
-                    f"  {label}: collaborator ({perm})"
-                    + (f" — {gr.description}" if gr.description else "")
-                )
+                continue
+            lines_out.append(
+                f"  {label}: collaborator ({perm})"
+                + (f" — {gr.description}" if gr.description else "")
+            )
         except Exception as e:
             errors.append(f"GitHub {label}: {e}")
             lines_out.append(f"  {label}: error — {e}")

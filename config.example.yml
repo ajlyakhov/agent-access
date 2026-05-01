@@ -3,13 +3,15 @@
 # Legacy: servers/github entries may be plain strings (ssh or owner/repo); name/description default.
 myproject:
   access:
-    master_key_path: ~/.ssh/id_master_myproject
-    agent_pubkey_path: ~/.ssh/agent_project.pub
-    agent_github_name: agent_gh_name
-    # optional: PAT for resources.github — only used if GITHUB_TOKEN env is unset (env wins when set).
-    github_token: ghp_...
-    # optional: pull | push | maintain | admin (default: push)
-    github_permission: push
+    master:
+      private_key_path: ~/.ssh/id_master_myproject
+      github_token: ghp_...
+    agent:
+      github_name: agent_gh_name
+      pubkey_path: ~/.ssh/agent_project.pub
+      github_token: ghp_...
+      # optional: pull | push | maintain | admin (default: push)
+      github_permission: push
   resources:
     servers:
       - name: Production web

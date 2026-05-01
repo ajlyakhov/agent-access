@@ -29,19 +29,27 @@ def minimal_project_yaml(
     *,
     servers: list[Any] | None = None,
     github: list[Any] | None = None,
-    github_token: str | None = None,
+    master_github_token: str | None = None,
+    agent_github_token: str | None = None,
 ) -> dict[str, Any]:
-    access: dict[str, Any] = {
-        "master_key_path": str(master.resolve()),
-        "agent_pubkey_path": str(pub.resolve()),
-        "agent_github_name": "someuser",
+    master_blk: dict[str, Any] = {
+        "private_key_path": str(master.resolve()),
+    }
+    if master_github_token is not None:
+        master_blk["github_token"] = master_github_token
+    agent_blk: dict[str, Any] = {
+        "github_name": "someuser",
+        "pubkey_path": str(pub.resolve()),
         "github_permission": "push",
     }
-    if github_token is not None:
-        access["github_token"] = github_token
+    if agent_github_token is not None:
+        agent_blk["github_token"] = agent_github_token
     return {
         "t": {
-            "access": access,
+            "access": {
+                "master": master_blk,
+                "agent": agent_blk,
+            },
             "resources": {
                 "servers": [] if servers is None else servers,
                 "github": [] if github is None else github,

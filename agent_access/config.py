@@ -13,21 +13,46 @@ VALID_GITHUB_PERMISSIONS = frozenset({"pull", "push", "maintain", "admin"})
 
 
 @dataclass(frozen=True)
-class AccessConfig:
-    master_key_path: Path
-    agent_pubkey_path: Path
-    agent_github_name: str
+class MasterAccessConfig:
+    """Resource owner: SSH key to manage servers; GitHub PAT to add/remove collaborators."""
+
+    private_key_path: Path
+    github_token: str | None = None
+
+
+@dataclass(frozen=True)
+class AgentAccessConfig:
+    """Account that receives SSH keys + GitHub repo access."""
+
+    github_name: str
+    pubkey_path: Path
     github_permission: str = "push"
-    github_token: str | None = None  # PAT if GITHUB_TOKEN env is unset
+    github_token: str | None = None  # invitee PAT (auto-accept invitations)
 
 
-def resolve_github_token(access: AccessConfig | None = None) -> str:
-    """Non-empty GITHUB_TOKEN env wins; otherwise access.github_token (if any)."""
+@dataclass(frozen=True)
+class AccessConfig:
+    master: MasterAccessConfig
+    agent: AgentAccessConfig
+
+
+def resolve_master_github_token(access: AccessConfig | None = None) -> str:
+    """Non-empty GITHUB_TOKEN env wins; otherwise access.master.github_token."""
     env = os.environ.get("GITHUB_TOKEN", "").strip()
     if env:
         return env
-    if access is not None and access.github_token:
-        return access.github_token.strip()
+    if access is not None and access.master.github_token:
+        return access.master.github_token.strip()
+    return ""
+
+
+def resolve_agent_github_token(access: AccessConfig | None = None) -> str:
+    """Non-empty AGENT_GITHUB_TOKEN env wins; otherwise access.agent.github_token."""
+    env = os.environ.get("AGENT_GITHUB_TOKEN", "").strip()
+    if env:
+        return env
+    if access is not None and access.agent.github_token:
+        return access.agent.github_token.strip()
     return ""
 
 
@@ -86,6 +111,70 @@ def _parse_user_host(entry: str) -> tuple[str, str, int]:
     return user, host, port
 
 
+def _optional_token(raw: dict[str, object], key: str) -> str | None:
+    v = raw.get(key)
+    if v is None:
+        return None
+    s = str(v).strip()
+    return s if s else None
+
+
+def _load_access(project: str, access_raw: dict[str, object]) -> AccessConfig:
+    master_raw = access_raw.get("master")
+    agent_raw = access_raw.get("agent")
+    if not isinstance(master_raw, dict):
+        raise ValueError(
+            f"Project {project!r}: access.master must be a mapping (see config.example.yml)",
+        )
+    if not isinstance(agent_raw, dict):
+        raise ValueError(
+            f"Project {project!r}: access.agent must be a mapping (see config.example.yml)",
+        )
+
+    try:
+        private_key_path = _expand(str(master_raw["private_key_path"]))
+    except KeyError as e:
+        raise ValueError(
+            f"Project {project!r}: access.master.{e.args[0]!r} is required",
+        ) from e
+
+    master_github_token = _optional_token(master_raw, "github_token")
+
+    try:
+        github_name = str(agent_raw["github_name"]).strip()
+        pubkey_path = _expand(str(agent_raw["pubkey_path"]))
+    except KeyError as e:
+        raise ValueError(
+            f"Project {project!r}: access.agent.{e.args[0]!r} is required",
+        ) from e
+
+    if not github_name:
+        raise ValueError(f"Project {project!r}: access.agent.github_name must be non-empty")
+
+    perm_raw = agent_raw.get("github_permission", "push")
+    github_permission = str(perm_raw).strip().lower()
+    if github_permission not in VALID_GITHUB_PERMISSIONS:
+        raise ValueError(
+            f"Project {project!r}: access.agent.github_permission must be one of "
+            f"{sorted(VALID_GITHUB_PERMISSIONS)}, got {github_permission!r}",
+        )
+
+    agent_github_token = _optional_token(agent_raw, "github_token")
+
+    return AccessConfig(
+        master=MasterAccessConfig(
+            private_key_path=private_key_path,
+            github_token=master_github_token,
+        ),
+        agent=AgentAccessConfig(
+            github_name=github_name,
+            pubkey_path=pubkey_path,
+            github_permission=github_permission,
+            github_token=agent_github_token,
+        ),
+    )
+
+
 def load_project_config(config_path: Path, project: str) -> ProjectConfig:
     if not config_path.is_file():
         raise FileNotFoundError(f"Config not found: {config_path}")
@@ -106,30 +195,7 @@ def load_project_config(config_path: Path, project: str) -> ProjectConfig:
     if not isinstance(access_raw, dict):
         raise ValueError(f"Project {project!r}: missing or invalid 'access'")
 
-    try:
-        master_key_path = _expand(str(access_raw["master_key_path"]))
-        agent_pubkey_path = _expand(str(access_raw["agent_pubkey_path"]))
-        agent_github_name = str(access_raw["agent_github_name"]).strip()
-    except KeyError as e:
-        raise ValueError(f"Project {project!r}: access.{e.args[0]!r} is required") from e
-
-    if not agent_github_name:
-        raise ValueError(f"Project {project!r}: agent_github_name must be non-empty")
-
-    perm_raw = access_raw.get("github_permission", "push")
-    github_permission = str(perm_raw).strip().lower()
-    if github_permission not in VALID_GITHUB_PERMISSIONS:
-        raise ValueError(
-            f"Project {project!r}: github_permission must be one of "
-            f"{sorted(VALID_GITHUB_PERMISSIONS)}, got {github_permission!r}"
-        )
-
-    gt_raw = access_raw.get("github_token")
-    github_token: str | None = None
-    if gt_raw is not None:
-        gs = str(gt_raw).strip()
-        if gs:
-            github_token = gs
+    access = _load_access(project, access_raw)
 
     resources = block.get("resources") or {}
     if not isinstance(resources, dict):
@@ -202,14 +268,6 @@ def load_project_config(config_path: Path, project: str) -> ProjectConfig:
         repos.append(
             GithubResource(name=name, description=description, repo=repo),
         )
-
-    access = AccessConfig(
-        master_key_path=master_key_path,
-        agent_pubkey_path=agent_pubkey_path,
-        agent_github_name=agent_github_name,
-        github_permission=github_permission,
-        github_token=github_token,
-    )
 
     return ProjectConfig(
         name=project,
