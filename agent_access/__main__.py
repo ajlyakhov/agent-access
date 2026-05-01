@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 import traceback
 from datetime import datetime, timezone
@@ -13,6 +12,7 @@ from agent_access.config import (
     ServerResource,
     load_project_config,
     read_agent_pubkeys,
+    resolve_github_token,
 )
 from agent_access.github_collab import (
     add_collaborator,
@@ -158,6 +158,7 @@ def cmd_enable(
                 name,
                 cfg.access.agent_github_name,
                 cfg.access.github_permission,
+                access=cfg.access,
             )
             print(f"GitHub OK: {label}", file=sys.stderr)
         except Exception as e:
@@ -218,7 +219,7 @@ def cmd_disable(
         owner, name = split_owner_repo(gr.repo)
         label = _github_log_label(gr)
         try:
-            remove_collaborator(owner, name, cfg.access.agent_github_name)
+            remove_collaborator(owner, name, cfg.access.agent_github_name, access=cfg.access)
             print(f"GitHub OK: {label}", file=sys.stderr)
         except Exception as e:
             errors.append(f"GitHub {label}: {e}")
@@ -238,7 +239,7 @@ def cmd_status(config_path: Path, project: str) -> int:
     cfg = load_project_config(config_path, project)
     pubkeys = read_agent_pubkeys(cfg.access.agent_pubkey_path)
     errors: list[str] = []
-    github_ok = bool(os.environ.get("GITHUB_TOKEN", "").strip())
+    github_ok = bool(resolve_github_token(cfg.access))
 
     lines_out: list[str] = [
         f"project: {cfg.name}",
@@ -276,7 +277,7 @@ def cmd_status(config_path: Path, project: str) -> int:
     lines_out.append("GitHub:")
     if not github_ok:
         lines_out.append(
-            "  (skipped — set GITHUB_TOKEN to check collaborator permission)"
+            "  (skipped — set GITHUB_TOKEN or access.github_token to check collaborator permission)"
         )
     for gr in cfg.github_repos:
         label = _github_log_label(gr)
@@ -285,7 +286,9 @@ def cmd_status(config_path: Path, project: str) -> int:
             continue
         owner, name = split_owner_repo(gr.repo)
         try:
-            perm = get_collaborator_permission(owner, name, cfg.access.agent_github_name)
+            perm = get_collaborator_permission(
+                owner, name, cfg.access.agent_github_name, access=cfg.access,
+            )
             if perm is None:
                 lines_out.append(
                     f"  {label}: not a collaborator"

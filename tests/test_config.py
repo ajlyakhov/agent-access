@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from agent_access.config import load_project_config, read_agent_pubkeys
+from agent_access.config import AccessConfig, load_project_config, read_agent_pubkeys, resolve_github_token
 
 
 def test_load_structured_resources(keypair: tuple[Path, Path], tmp_path: Path) -> None:
@@ -46,6 +46,60 @@ def test_load_structured_resources(keypair: tuple[Path, Path], tmp_path: Path) -
     assert p.servers[0].name == "Web"
     assert p.servers[0].ssh == "ubuntu@10.0.0.1"
     assert p.github_repos[0].repo == "acme/api"
+
+
+def test_access_github_token(keypair: tuple[Path, Path], tmp_path: Path) -> None:
+    master, pub = keypair
+    cfg = tmp_path / "c.yml"
+    cfg.write_text(
+        yaml.safe_dump(
+            {
+                "proj": {
+                    "access": {
+                        "master_key_path": str(master),
+                        "agent_pubkey_path": str(pub),
+                        "agent_github_name": "bot",
+                        "github_token": " ghp_from_yaml ",
+                    },
+                    "resources": {"servers": [], "github": []},
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    p = load_project_config(cfg, "proj")
+    assert p.access.github_token == "ghp_from_yaml"
+
+
+def test_resolve_github_token_env_over_config(
+    keypair: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    master, pub = keypair
+    monkeypatch.setenv("GITHUB_TOKEN", "from_env")
+    acc = AccessConfig(
+        master_key_path=master,
+        agent_pubkey_path=pub,
+        agent_github_name="u",
+        github_token="from_yaml",
+    )
+    assert resolve_github_token(acc) == "from_env"
+
+
+def test_resolve_github_token_config_when_env_empty(
+    keypair: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    master, pub = keypair
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    acc = AccessConfig(
+        master_key_path=master,
+        agent_pubkey_path=pub,
+        agent_github_name="u",
+        github_token="from_yaml",
+    )
+    assert resolve_github_token(acc) == "from_yaml"
 
 
 def test_load_legacy_string_entries(keypair: tuple[Path, Path], tmp_path: Path) -> None:

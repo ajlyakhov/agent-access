@@ -1,25 +1,24 @@
 from __future__ import annotations
 
-import os
 from typing import Any
 
 import requests
 
+from agent_access.config import AccessConfig, resolve_github_token
+
 GITHUB_API = "https://api.github.com"
 
 
-def _token() -> str:
-    token = os.environ.get("GITHUB_TOKEN", "").strip()
+def _session(access: AccessConfig | None = None) -> requests.Session:
+    token = resolve_github_token(access)
     if not token:
-        raise RuntimeError("GITHUB_TOKEN environment variable is not set")
-    return token
-
-
-def _session() -> requests.Session:
+        raise RuntimeError(
+            "GitHub token not set: set GITHUB_TOKEN or access.github_token in config",
+        )
     s = requests.Session()
     s.headers.update(
         {
-            "Authorization": f"Bearer {_token()}",
+            "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
         }
@@ -27,9 +26,16 @@ def _session() -> requests.Session:
     return s
 
 
-def add_collaborator(owner: str, repo: str, username: str, permission: str) -> None:
+def add_collaborator(
+    owner: str,
+    repo: str,
+    username: str,
+    permission: str,
+    *,
+    access: AccessConfig | None = None,
+) -> None:
     url = f"{GITHUB_API}/repos/{owner}/{repo}/collaborators/{username}"
-    session = _session()
+    session = _session(access)
     resp = session.put(url, json={"permission": permission}, timeout=60)
     if resp.status_code in (201, 204):
         return
@@ -45,9 +51,15 @@ def add_collaborator(owner: str, repo: str, username: str, permission: str) -> N
     resp.raise_for_status()
 
 
-def remove_collaborator(owner: str, repo: str, username: str) -> None:
+def remove_collaborator(
+    owner: str,
+    repo: str,
+    username: str,
+    *,
+    access: AccessConfig | None = None,
+) -> None:
     url = f"{GITHUB_API}/repos/{owner}/{repo}/collaborators/{username}"
-    session = _session()
+    session = _session(access)
     resp = session.delete(url, timeout=60)
     if resp.status_code in (204, 404):
         return
@@ -59,9 +71,9 @@ def split_owner_repo(full: str) -> tuple[str, str]:
     return owner, repo
 
 
-def github_user_exists(username: str) -> bool:
+def github_user_exists(username: str, *, access: AccessConfig | None = None) -> bool:
     """Return True if the login exists on GitHub."""
-    session = _session()
+    session = _session(access)
     url = f"{GITHUB_API}/users/{username}"
     resp = session.get(url, timeout=60)
     if resp.status_code == 404:
@@ -70,9 +82,14 @@ def github_user_exists(username: str) -> bool:
     return True
 
 
-def fetch_repo_for_token(owner: str, repo: str) -> dict[str, Any]:
+def fetch_repo_for_token(
+    owner: str,
+    repo: str,
+    *,
+    access: AccessConfig | None = None,
+) -> dict[str, Any]:
     """GET repository as the authenticated token; body includes permissions for the token."""
-    session = _session()
+    session = _session(access)
     url = f"{GITHUB_API}/repos/{owner}/{repo}"
     resp = session.get(url, timeout=60)
     if resp.status_code == 404:
@@ -84,13 +101,19 @@ def fetch_repo_for_token(owner: str, repo: str) -> dict[str, Any]:
     return body
 
 
-def get_collaborator_permission(owner: str, repo: str, username: str) -> str | None:
+def get_collaborator_permission(
+    owner: str,
+    repo: str,
+    username: str,
+    *,
+    access: AccessConfig | None = None,
+) -> str | None:
     """
     Return GitHub permission role for username on repo, or None if not a collaborator.
     Role is typically: admin, maintain, write, read, triage, or none.
     """
     url = f"{GITHUB_API}/repos/{owner}/{repo}/collaborators/{username}/permission"
-    session = _session()
+    session = _session(access)
     resp = session.get(url, timeout=60)
     if resp.status_code == 404:
         return None

@@ -18,6 +18,17 @@ class AccessConfig:
     agent_pubkey_path: Path
     agent_github_name: str
     github_permission: str = "push"
+    github_token: str | None = None  # PAT if GITHUB_TOKEN env is unset
+
+
+def resolve_github_token(access: AccessConfig | None = None) -> str:
+    """Non-empty GITHUB_TOKEN env wins; otherwise access.github_token (if any)."""
+    env = os.environ.get("GITHUB_TOKEN", "").strip()
+    if env:
+        return env
+    if access is not None and access.github_token:
+        return access.github_token.strip()
+    return ""
 
 
 @dataclass(frozen=True)
@@ -113,6 +124,13 @@ def load_project_config(config_path: Path, project: str) -> ProjectConfig:
             f"{sorted(VALID_GITHUB_PERMISSIONS)}, got {github_permission!r}"
         )
 
+    gt_raw = access_raw.get("github_token")
+    github_token: str | None = None
+    if gt_raw is not None:
+        gs = str(gt_raw).strip()
+        if gs:
+            github_token = gs
+
     resources = block.get("resources") or {}
     if not isinstance(resources, dict):
         raise ValueError(f"Project {project!r}: 'resources' must be a mapping")
@@ -190,6 +208,7 @@ def load_project_config(config_path: Path, project: str) -> ProjectConfig:
         agent_pubkey_path=agent_pubkey_path,
         agent_github_name=agent_github_name,
         github_permission=github_permission,
+        github_token=github_token,
     )
 
     return ProjectConfig(

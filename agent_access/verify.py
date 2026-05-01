@@ -8,7 +8,7 @@ from typing import Any
 import paramiko
 from paramiko import ECDSAKey, Ed25519Key, RSAKey
 
-from agent_access.config import ProjectConfig, _parse_user_host, read_agent_pubkeys
+from agent_access.config import ProjectConfig, _parse_user_host, read_agent_pubkeys, resolve_github_token
 from agent_access.github_collab import (
     fetch_repo_for_token,
     github_user_exists,
@@ -138,14 +138,15 @@ def run_verification(cfg: ProjectConfig) -> tuple[list[VerifyCheck], tuple[str, 
                     ),
                 )
 
-    token = os.environ.get("GITHUB_TOKEN", "").strip()
+    token = resolve_github_token(cfg.access)
+    env_token_set = bool(os.environ.get("GITHUB_TOKEN", "").strip())
     if cfg.github_repos:
         if not token:
             checks.append(
                 VerifyCheck(
-                    label="GITHUB_TOKEN",
+                    label="GitHub token",
                     ok=False,
-                    detail="required for configured GitHub repos but not set",
+                    detail="set GITHUB_TOKEN or access.github_token (required for configured GitHub repos)",
                 ),
             )
             for gr in cfg.github_repos:
@@ -157,16 +158,17 @@ def run_verification(cfg: ProjectConfig) -> tuple[list[VerifyCheck], tuple[str, 
                     ),
                 )
         else:
+            src = "environment" if env_token_set else "access.github_token in config"
             checks.append(
                 VerifyCheck(
-                    label="GITHUB_TOKEN",
+                    label="GitHub token",
                     ok=True,
-                    detail="set (value not shown)",
+                    detail=f"set ({src}; value not shown)",
                 ),
             )
             agent_login = cfg.access.agent_github_name
             try:
-                u_ok = github_user_exists(agent_login)
+                u_ok = github_user_exists(agent_login, access=cfg.access)
                 checks.append(
                     VerifyCheck(
                         label=f"GitHub user '{agent_login}'",
@@ -197,7 +199,7 @@ def run_verification(cfg: ProjectConfig) -> tuple[list[VerifyCheck], tuple[str, 
                     continue
                 try:
                     owner, repo = split_owner_repo(gr.repo)
-                    data: dict[str, Any] = fetch_repo_for_token(owner, repo)
+                    data: dict[str, Any] = fetch_repo_for_token(owner, repo, access=cfg.access)
                     perms = data.get("permissions") or {}
                     is_admin = bool(perms.get("admin"))
                     role = data.get("role_name") or ""

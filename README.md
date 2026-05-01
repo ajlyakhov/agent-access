@@ -9,7 +9,7 @@ CLI to **grant or revoke** agent access to servers (via `authorized_keys`) and G
 - Python **3.10+**
 - A **master** SSH private key that can sign in as each configured Linux user and manage `~/.ssh/authorized_keys`
 - A **public** key file for the agent (one or more lines) to install on servers
-- **`GITHUB_TOKEN`** (for projects with `resources.github`) with **admin** on those repositories if you need to add/remove collaborators
+- A **GitHub token** when `resources.github` is non-empty: set **`GITHUB_TOKEN`** or **`access.github_token`** in config (non-empty env wins). Token needs **admin** on those repos to add/remove collaborators.
 
 Host key policy uses Paramiko’s `AutoAddPolicy` (equivalent to blindly accepting new hosts). For production use, prime `known_hosts` or adjust the code if you need stricter SSH host verification.
 
@@ -75,7 +75,7 @@ Copy [`config.example.yml`](config.example.yml) into **`~/.agent-access/config.y
 
 Each **server** has `name`, `description`, and `ssh` (`user@host` or `user@host:port`). Each **GitHub** entry has `name`, `description`, and `repo` (`owner/name`). You can still use legacy plain strings for servers (SSH target only) and repos (`owner/repo`).
 
-Paths under `access` support `~`.
+Paths under `access` support `~`. Optional **`access.github_token`** supplies the PAT when `GITHUB_TOKEN` is unset (if both are set, **the environment variable wins**).
 
 Global CLI option **`--config PATH`** defaults to **`~/.agent-access/config.yml`**. It must appear **before** the subcommand:
 
@@ -87,7 +87,7 @@ agent-access --config /path/to/config.yml verify myproject
 
 | Variable | Purpose |
 |----------|---------|
-| `GITHUB_TOKEN` | Required for `enable` / `disable` when repos are listed; required for `verify` / `status` GitHub checks when repos are listed |
+| `GITHUB_TOKEN` | Optional if `access.github_token` is set. When set and non-empty, used instead of the config field. Required (via **either** mechanism) for `enable` / `disable` / `verify` / `status` when GitHub repos are configured. |
 
 Use a classic PAT with `repo` scope (or another token that yields **`permissions.admin: true`** on `GET /repos/{owner}/{repo}` for those repositories).
 
@@ -135,7 +135,7 @@ agent-access disable myproject -y
 
 ### `status`
 
-Shows whether agent keys appear in each host’s `authorized_keys` and collaborator permission on each repo (GitHub skipped if `GITHUB_TOKEN` unset).
+Shows whether agent keys appear in each host’s `authorized_keys` and collaborator permission on each repo (GitHub skipped if neither `GITHUB_TOKEN` nor `access.github_token` is set).
 
 ```bash
 agent-access status myproject

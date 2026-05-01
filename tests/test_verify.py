@@ -87,6 +87,41 @@ def test_run_verification_github_admin_ok(
     mock_ssh.assert_not_called()
 
 
+@patch("agent_access.verify._verify_ssh_server")
+@patch("agent_access.verify.fetch_repo_for_token")
+@patch("agent_access.verify.github_user_exists", return_value=True)
+def test_run_verification_github_token_from_config(
+    mock_user: MagicMock,
+    mock_fetch: MagicMock,
+    mock_ssh: MagicMock,
+    keypair: tuple[Path, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    mock_fetch.return_value = {"permissions": {"admin": True}, "role_name": "admin"}
+    master, pub = keypair
+    cfg_path = tmp_path / "c.yml"
+    write_yaml(
+        cfg_path,
+        minimal_project_yaml(
+            master,
+            pub,
+            servers=[],
+            github=[{"name": "Lib", "description": "d", "repo": "o/r"}],
+            github_token="fake-token-from-config",
+        ),
+    )
+    cfg = load_project_config(cfg_path, "t")
+    checks, _ = run_verification(cfg)
+    assert verification_succeeded(checks)
+    assert any(
+        c.label == "GitHub token" and "access.github_token in config" in c.detail
+        for c in checks
+    )
+    mock_ssh.assert_not_called()
+
+
 @patch("agent_access.verify.fetch_repo_for_token")
 @patch("agent_access.verify.github_user_exists", return_value=True)
 def test_run_verification_github_not_admin(
