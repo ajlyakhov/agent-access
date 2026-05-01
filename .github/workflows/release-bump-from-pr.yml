@@ -1,0 +1,45 @@
+# When a PR is merged into main, optionally bump semver from PR labels, commit, and push.
+# Tag on version bump (.github/workflows/tag-on-version-bump.yml) then pushes v{x.y.z}.
+#
+# Labels (strongest wins if multiple):
+#   release:patch  -> Z+1
+#   release:minor  -> Y+1, Z=0
+#   release:major  -> X+1, Y=Z=0
+#
+# Skips if the PR does not carry any release:* label, or if [project].version already
+# changed in the merge (manual bump in PR — use Tag workflow only).
+#
+# Script: .github/scripts/release_bump_from_merged_pr.py
+
+name: Release bump from PR labels
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-bump-main
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Apply semver bump from labels
+        run: python3 .github/scripts/release_bump_from_merged_pr.py
