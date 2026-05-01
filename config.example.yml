@@ -1,0 +1,25 @@
+# Default config path: ~/.agent-access/config.yml
+# Top-level key = project name (CLI: agent-access enable myproject)
+# Legacy: servers/github entries may be plain strings (ssh or owner/repo); name/description default.
+myproject:
+  access:
+    master_key_path: ~/.ssh/id_master_safelagoon
+    agent_pubkey_path: ~/.ssh/agent_project.pub
+    agent_github_name: agent_gh_name
+    # optional: pull | push | maintain | admin (default: push)
+    github_permission: push
+  resources:
+    servers:
+      - name: Production web
+        description: Public web tier; deploy via CI from org1/repo1.
+        ssh: ubuntu@203.0.113.10
+      - name: Bastion / jump
+        description: SSH jump host for internal subnets.
+        ssh: ec2-user@203.0.113.11
+    github:
+      - name: Core API service
+        description: Primary HTTP API and service definitions.
+        repo: org1/repo1
+      - name: Shared libraries
+        description: Internal Python utilities consumed by other repos.
+        repo: org2/repo2
