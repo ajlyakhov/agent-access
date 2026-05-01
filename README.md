@@ -2,6 +2,8 @@
 
 CLI to **grant or revoke** agent access to servers (via `authorized_keys`) and GitHub repos (via collaborator API), driven by a per-project YAML config. It can **verify** keys and connectivity before changes, print an **agent context** block after a successful `enable`, and show **status** of current access.
 
+**Repository:** [github.com/ajlyakhov/agent-access](https://github.com/ajlyakhov/agent-access)
+
 ## Requirements
 
 - Python **3.10+**
@@ -12,6 +14,12 @@ CLI to **grant or revoke** agent access to servers (via `authorized_keys`) and G
 Host key policy uses Paramiko’s `AutoAddPolicy` (equivalent to blindly accepting new hosts). For production use, prime `known_hosts` or adjust the code if you need stricter SSH host verification.
 
 ## Install
+
+### Install from Git (no clone)
+
+```bash
+pip install "git+https://github.com/ajlyakhov/agent-access.git"
+```
 
 ### From PyPI (after publish)
 
